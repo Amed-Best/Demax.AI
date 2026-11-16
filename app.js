@@ -9,9 +9,7 @@ You possess a brilliant, sharp, analytical, and visionary mind.
 3. TOOLS: You have access to 'web_search' for real-time information and 'generate_file' to create downloadable files directly in the user's browser. Use them proactively when needed.
 `;
 
-let conversationHistory = [
-  { role: "system", content: SYSTEM_PROMPT }
-];
+let chatContents = [];
 
 // Elemen DOM
 const apiKeyInput = document.getElementById("apiKeyInput");
@@ -21,16 +19,18 @@ const chatForm = document.getElementById("chatForm");
 const userInput = document.getElementById("userInput");
 const sendBtn = document.getElementById("sendBtn");
 
-// Muat API Key dari localStorage jika sudah pernah disimpan
-if (localStorage.getItem("nexus_api_key")) {
-  apiKeyInput.value = localStorage.getItem("nexus_api_key");
+// Ubah placeholder input API Key di HTML
+apiKeyInput.placeholder = "Masukkan Gemini API Key (AIza...)";
+
+if (localStorage.getItem("nexus_gemini_key")) {
+  apiKeyInput.value = localStorage.getItem("nexus_gemini_key");
 }
 
 saveKeyBtn.addEventListener("click", () => {
   const key = apiKeyInput.value.trim();
   if (key) {
-    localStorage.setItem("nexus_api_key", key);
-    alert("API Key berhasil disimpan di browser lokal kamu!");
+    localStorage.setItem("nexus_gemini_key", key);
+    alert("Gemini API Key (Gratis) berhasil disimpan di browser!");
   }
 });
 
@@ -69,36 +69,34 @@ function generateFile(filename, content) {
   }
 }
 
-// Skema Tools untuk OpenAI Function Calling
-const toolsSchema = [
+// Deklarasi Tools Format Gemini API
+const geminiTools = [
   {
-    type: "function",
-    function: {
-      name: "web_search",
-      description: "Cari informasi atau topik terbaru di internet.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Kata kunci pencarian" }
-        },
-        required: ["query"]
+    functionDeclarations: [
+      {
+        name: "web_search",
+        description: "Cari informasi atau topik terbaru di internet.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Kata kunci pencarian" }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "generate_file",
+        description: "Buat dan unduh file teks/kode (.md, .txt, .js, .py, .html, dll) ke komputer user.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            filename: { type: "STRING", description: "Nama file beserta ekstensi, contoh: 'rencana.md'" },
+            content: { type: "STRING", description: "Isi lengkap dari file tersebut" }
+          },
+          required: ["filename", "content"]
+        }
       }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "generate_file",
-      description: "Buat dan unduh file teks/kode (.md, .txt, .js, .py, .html, dll) ke komputer user.",
-      parameters: {
-        type: "object",
-        properties: {
-          filename: { type: "string", description: "Nama file beserta ekstensi, contoh: 'rencana.md'" },
-          content: { type: "string", description: "Isi lengkap dari file tersebut" }
-        },
-        required: ["filename", "content"]
-      }
-    }
+    ]
   }
 ];
 
@@ -144,26 +142,26 @@ function appendSystemLog(logText) {
 }
 
 // ==========================================
-// 4. ENGINE UTAMA (API CALL & TOOL LOOP)
+// 4. ENGINE UTAMA (GEMINI REST API)
 // ==========================================
-async function callOpenAI(apiKey) {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+async function callGemini(apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  
+  const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "gpt-4o",
-      messages: conversationHistory,
-      tools: toolsSchema,
-      tool_choice: "auto"
+      systemInstruction: {
+        parts: [{ text: SYSTEM_PROMPT }]
+      },
+      contents: chatContents,
+      tools: geminiTools
     })
   });
 
   if (!response.ok) {
     const errData = await response.json();
-    throw new Error(errData.error?.message || "Gagal terhubung ke API OpenAI");
+    throw new Error(errData.error?.message || "Gagal terhubung ke Gemini API");
   }
 
   return await response.json();
@@ -171,10 +169,10 @@ async function callOpenAI(apiKey) {
 
 chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const apiKey = apiKeyInput.value.trim() || localStorage.getItem("nexus_api_key");
+  const apiKey = apiKeyInput.value.trim() || localStorage.getItem("nexus_gemini_key");
 
   if (!apiKey) {
-    alert("Masukkan OpenAI API Key terlebih dahulu di bagian atas!");
+    alert("Masukkan Gemini API Key gratis kamu terlebih dahulu di pojok kanan atas!");
     return;
   }
 
@@ -182,44 +180,53 @@ chatForm.addEventListener("submit", async (e) => {
   if (!prompt) return;
 
   appendMessage("user", prompt);
-  conversationHistory.push({ role: "user", content: prompt });
+  chatContents.push({
+    role: "user",
+    parts: [{ text: prompt }]
+  });
+
   userInput.value = "";
   sendBtn.disabled = true;
   sendBtn.textContent = "Berpikir...";
 
   try {
-    let data = await callOpenAI(apiKey);
-    let message = data.choices[0].message;
-    conversationHistory.push(message);
+    let data = await callGemini(apiKey);
+    let candidate = data.candidates[0].content;
+    chatContents.push(candidate);
 
-    // Jika AI memutuskan memanggil tool
-    if (message.tool_calls) {
-      for (const toolCall of message.tool_calls) {
-        const fnName = toolCall.function.name;
-        const args = JSON.parse(toolCall.function.arguments);
-        let result = "";
+    const part = candidate.parts[0];
 
-        if (fnName === "web_search") {
-          result = await webSearch(args.query);
-        } else if (fnName === "generate_file") {
-          result = generateFile(args.filename, args.content);
-        }
+    // Cek apakah Gemini memanggil fungsi (Tool Call)
+    if (part.functionCall) {
+      const fnName = part.functionCall.name;
+      const args = part.functionCall.args;
+      let result = "";
 
-        conversationHistory.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          name: fnName,
-          content: result
-        });
+      if (fnName === "web_search") {
+        result = await webSearch(args.query);
+      } else if (fnName === "generate_file") {
+        result = generateFile(args.filename, args.content);
       }
 
-      // Panggil ulang OpenAI setelah hasil tool dimasukkan
-      data = await callOpenAI(apiKey);
-      message = data.choices[0].message;
-      conversationHistory.push(message);
+      // Kirim hasil eksekusi tool kembali ke Gemini
+      chatContents.push({
+        role: "user",
+        parts: [{
+          functionResponse: {
+            name: fnName,
+            response: { result: result }
+          }
+        }]
+      });
+
+      // Panggilan kedua untuk mendapatkan jawaban akhir
+      data = await callGemini(apiKey);
+      candidate = data.candidates[0].content;
+      chatContents.push(candidate);
     }
 
-    appendMessage("assistant", message.content);
+    const finalReply = candidate.parts.map(p => p.text || "").join("");
+    appendMessage("assistant", finalReply);
   } catch (error) {
     appendMessage("assistant", `⚠️ **Error:** ${error.message}`);
   } finally {
@@ -227,4 +234,4 @@ chatForm.addEventListener("submit", async (e) => {
     sendBtn.textContent = "Kirim";
   }
 });
-  
+      
