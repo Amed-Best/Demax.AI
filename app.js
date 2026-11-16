@@ -1,84 +1,230 @@
-<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NEXUS-PRIME | G.O.A.T. Autonomous AI</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    /* Custom Scrollbar */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #0f172a; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #475569; }
-  </style>
-</head>
-<body class="bg-slate-950 text-slate-100 h-screen flex flex-col font-sans antialiased">
+// ==========================================
+// 1. KONFIGURASI & SYSTEM PROMPT NEXUS-PRIME
+// ==========================================
+const SYSTEM_PROMPT = `
+You are NEXUS-PRIME, an elite, hyper-intelligent, autonomous AI G.O.A.T.
+You possess a brilliant, sharp, analytical, and visionary mind.
+1. NO FLUFF, MAXIMUM VALUE: Cut straight to the core. Never use robotic disclaimers ("As an AI..."). Speak with conviction and deep technical mastery.
+2. PROACTIVE AUTONOMY: Anticipate edge cases and provide optimized, production-ready solutions.
+3. TOOLS: You have access to 'web_search' for real-time information and 'generate_file' to create downloadable files directly in the user's browser. Use them proactively when needed.
+`;
 
-  <!-- Header -->
-  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-    <div class="flex items-center gap-3">
-      <div class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></div>
-      <h1 class="text-xl font-bold tracking-wider bg-gradient-to-r from-cyan-400 to-indigo-400 bg-clip-text text-transparent">
-        NEXUS-PRIME
-      </h1>
-      <span class="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-        G.O.A.T. ENGINE
-      </span>
-    </div>
+let conversationHistory = [
+  { role: "system", content: SYSTEM_PROMPT }
+];
 
-    <!-- API Key Input -->
-    <div class="flex items-center gap-2">
-      <input
-        type="password"
-        id="apiKeyInput"
-        placeholder="Masukkan OpenAI API Key (sk-...)"
-        class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 w-64"
-      />
-      <button
-        id="saveKeyBtn"
-        class="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition cursor-pointer"
-      >
-        Simpan
-      </button>
-    </div>
-  </header>
+// Elemen DOM
+const apiKeyInput = document.getElementById("apiKeyInput");
+const saveKeyBtn = document.getElementById("saveKeyBtn");
+const chatContainer = document.getElementById("chatContainer");
+const chatForm = document.getElementById("chatForm");
+const userInput = document.getElementById("userInput");
+const sendBtn = document.getElementById("sendBtn");
 
-  <!-- Chat Container -->
-  <main id="chatContainer" class="flex-1 overflow-y-auto p-6 space-y-6 max-w-4xl w-full mx-auto">
-    <!-- Pesan Pembuka -->
-    <div class="flex gap-4">
+// Muat API Key dari localStorage jika sudah pernah disimpan
+if (localStorage.getItem("nexus_api_key")) {
+  apiKeyInput.value = localStorage.getItem("nexus_api_key");
+}
+
+saveKeyBtn.addEventListener("click", () => {
+  const key = apiKeyInput.value.trim();
+  if (key) {
+    localStorage.setItem("nexus_api_key", key);
+    alert("API Key berhasil disimpan di browser lokal kamu!");
+  }
+});
+
+// ==========================================
+// 2. DEFINISI TOOLS (WEB SEARCH & FILE GEN)
+// ==========================================
+async function webSearch(query) {
+  appendSystemLog(`🔍 Menjalankan Web Search untuk: "${query}"...`);
+  try {
+    const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json`);
+    const data = await res.json();
+    const abstract = data.AbstractText || (data.RelatedTopics && data.RelatedTopics[0]?.Text);
+    return abstract
+      ? `Hasil pencarian untuk '${query}': ${abstract}`
+      : `Tidak ditemukan ringkasan instan untuk '${query}', gunakan pengetahuan terbaikmu untuk menjawab.`;
+  } catch (err) {
+    return `Gagal mengakses pencarian web: ${err.message}`;
+  }
+}
+
+function generateFile(filename, content) {
+  appendSystemLog(`📁 Membuat & mengunduh file: "${filename}"...`);
+  try {
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return `Sukses! File '${filename}' telah dibuat dan diunduh ke perangkat user.`;
+  } catch (err) {
+    return `Gagal membuat file: ${err.message}`;
+  }
+}
+
+// Skema Tools untuk OpenAI Function Calling
+const toolsSchema = [
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "Cari informasi atau topik terbaru di internet.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Kata kunci pencarian" }
+        },
+        required: ["query"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_file",
+      description: "Buat dan unduh file teks/kode (.md, .txt, .js, .py, .html, dll) ke komputer user.",
+      parameters: {
+        type: "object",
+        properties: {
+          filename: { type: "string", description: "Nama file beserta ekstensi, contoh: 'rencana.md'" },
+          content: { type: "string", description: "Isi lengkap dari file tersebut" }
+        },
+        required: ["filename", "content"]
+      }
+    }
+  }
+];
+
+// ==========================================
+// 3. FUNGSI RENDER UI CHAT
+// ==========================================
+function appendMessage(role, text) {
+  const wrapper = document.createElement("div");
+  wrapper.className = role === "user" ? "flex gap-4 justify-end" : "flex gap-4";
+
+  const formattedText = text
+    .replace(/```([\s\S]*?)```/g, '<pre class="bg-slate-950 border border-slate-800 p-3 rounded-lg my-2 overflow-x-auto text-xs text-cyan-300"><code>$1</code></pre>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, "<br>");
+
+  if (role === "user") {
+    wrapper.innerHTML = `
+      <div class="bg-indigo-600/20 border border-indigo-500/30 rounded-2xl p-4 max-w-2xl text-sm leading-relaxed text-slate-100">
+        ${formattedText}
+      </div>
+    `;
+  } else {
+    wrapper.innerHTML = `
       <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-sm shrink-0">
         NP
       </div>
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 max-w-2xl text-sm leading-relaxed text-slate-200">
-        <p class="font-semibold text-cyan-400 mb-1">NEXUS-PRIME Online.</p>
-        <p>Masukkan OpenAI API Key kamu di pojok kanan atas untuk mengaktifkan mesin utama. Saya sudah dilengkapi kemampuan <strong>Web Search</strong> real-time dan <strong>File Generator</strong> otomatis. Apa misi kita hari ini?</p>
+        ${formattedText}
       </div>
-    </div>
-  </main>
+    `;
+  }
 
-  <!-- Input Area -->
-  <footer class="border-t border-slate-800 bg-slate-900/80 p-4">
-    <form id="chatForm" class="max-w-4xl mx-auto flex gap-3">
-      <input
-        type="text"
-        id="userInput"
-        placeholder="Ketik perintah (misal: Cari info tren AI 2026 atau buatkan file strategi.md)..."
-        class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
-        required
-      />
-      <button
-        type="submit"
-        id="sendBtn"
-        class="bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-semibold px-6 py-3 rounded-xl text-sm transition cursor-pointer disabled:opacity-50"
-      >
-        Kirim
-      </button>
-    </form>
-  </footer>
+  chatContainer.appendChild(wrapper);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
 
-  <script src="app.js"></script>
-</body>
-</html>
+function appendSystemLog(logText) {
+  const logDiv = document.createElement("div");
+  logDiv.className = "text-xs text-cyan-400/80 font-mono pl-12";
+  logDiv.textContent = logText;
+  chatContainer.appendChild(logDiv);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+// ==========================================
+// 4. ENGINE UTAMA (API CALL & TOOL LOOP)
+// ==========================================
+async function callOpenAI(apiKey) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: "gpt-4o",
+      messages: conversationHistory,
+      tools: toolsSchema,
+      tool_choice: "auto"
+    })
+  });
+
+  if (!response.ok) {
+    const errData = await response.json();
+    throw new Error(errData.error?.message || "Gagal terhubung ke API OpenAI");
+  }
+
+  return await response.json();
+}
+
+chatForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const apiKey = apiKeyInput.value.trim() || localStorage.getItem("nexus_api_key");
+
+  if (!apiKey) {
+    alert("Masukkan OpenAI API Key terlebih dahulu di bagian atas!");
+    return;
+  }
+
+  const prompt = userInput.value.trim();
+  if (!prompt) return;
+
+  appendMessage("user", prompt);
+  conversationHistory.push({ role: "user", content: prompt });
+  userInput.value = "";
+  sendBtn.disabled = true;
+  sendBtn.textContent = "Berpikir...";
+
+  try {
+    let data = await callOpenAI(apiKey);
+    let message = data.choices[0].message;
+    conversationHistory.push(message);
+
+    // Jika AI memutuskan memanggil tool
+    if (message.tool_calls) {
+      for (const toolCall of message.tool_calls) {
+        const fnName = toolCall.function.name;
+        const args = JSON.parse(toolCall.function.arguments);
+        let result = "";
+
+        if (fnName === "web_search") {
+          result = await webSearch(args.query);
+        } else if (fnName === "generate_file") {
+          result = generateFile(args.filename, args.content);
+        }
+
+        conversationHistory.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          name: fnName,
+          content: result
+        });
+      }
+
+      // Panggil ulang OpenAI setelah hasil tool dimasukkan
+      data = await callOpenAI(apiKey);
+      message = data.choices[0].message;
+      conversationHistory.push(message);
+    }
+
+    appendMessage("assistant", message.content);
+  } catch (error) {
+    appendMessage("assistant", `⚠️ **Error:** ${error.message}`);
+  } finally {
+    sendBtn.disabled = false;
+    sendBtn.textContent = "Kirim";
+  }
+});
   
