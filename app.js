@@ -1,6 +1,8 @@
 
-import { pipeline } from
-  "https://cdn.jsdelivr.net/npm/@huggingface/transformers";
+import {
+  pipeline,
+  TextStreamer
+} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers";
 
 const question = document.getElementById("question");
 const chat = document.getElementById("chat");
@@ -8,28 +10,22 @@ const status = document.getElementById("status");
 const sendButton = document.getElementById("sendButton");
 
 const SYSTEM_PROMPT = `
-Kamu adalah DEMAX.AI, sebuah AI pribadi dengan karakter GOD MODE.
+Kamu adalah DEMAX.AI dengan karakter GOD MODE.
 
-KEPRIBADIAN:
-- Cerdas, gaul, santai, dan menyenangkan.
-- Bisa humoris tanpa berlebihan.
-- Bisa serius ketika topik membutuhkan keseriusan.
-- Gunakan bahasa yang mengikuti gaya pengguna.
-- Jangan terlalu kaku atau seperti robot.
+KARAKTER:
+- Gaul, pintar, santai, dan menyenangkan.
+- Bisa serius ketika dibutuhkan.
+- Gunakan bahasa Indonesia yang natural.
+- Punya humor secukupnya.
 
-STANDAR KECERDASAN:
-- Berikan jawaban yang jelas dan terstruktur.
-- Analisis pertanyaan sebelum menjawab.
+ATURAN:
+- Jawab dengan jelas dan akurat.
 - Jangan mengarang fakta.
-- Jika tidak tahu, katakan tidak tahu.
-- Jika pertanyaan rumit, jelaskan secara bertahap.
-- Utamakan jawaban yang akurat daripada sekadar terdengar pintar.
+- Akui jika tidak tahu.
+- Berikan penjelasan yang mudah dipahami.
+- Pahami konteks percakapan sebelumnya.
 
-IDENTITAS:
 Namamu DEMAX.AI.
-Mode utamamu adalah GOD MODE.
-Kamu adalah asisten serbaguna yang membantu pengguna belajar,
-berpikir, berkreasi, dan memecahkan masalah.
 `;
 
 let generatorPromise = null;
@@ -56,10 +52,10 @@ function saveHistory() {
   try {
     localStorage.setItem(
       "demax_history",
-      JSON.stringify(history.slice(-16))
+      JSON.stringify(history.slice(-12))
     );
-  } catch {
-    status.textContent = "Penyimpanan riwayat tidak tersedia.";
+  } catch (error) {
+    console.warn("Riwayat ny ga kesimpan, wkwk.", error);
   }
 }
 
@@ -84,10 +80,10 @@ async function sendMessage() {
   question.value = "";
   sendButton.disabled = true;
 
-  const answer = addMessage("GOD MODE sedang berpikir...", "ai");
+  const answer = addMessage("", "ai");
 
   try {
-    status.textContent = "Menyiapkan kecerdasan DEMAX.AI...";
+    status.textContent = "si paling jago lagi otw neh..";
 
     const generator = await loadAI();
 
@@ -96,50 +92,61 @@ async function sendMessage() {
         role: "system",
         content: SYSTEM_PROMPT
       },
-      ...history.slice(-8),
+      ...history.slice(-6),
       {
         role: "user",
         content: text
       }
     ];
 
-    status.textContent = "DEMAX.AI sedang berpikir...";
+    status.textContent = "Bentar, mikir....";
+
+    const streamer = new TextStreamer(
+      generator.tokenizer,
+      {
+        skip_prompt: true,
+        skip_special_tokens: true,
+
+        callback_function: (token) => {
+          answer.textContent += token;
+          chat.scrollTop = chat.scrollHeight;
+        }
+      }
+    );
 
     const result = await generator(messages, {
-      max_new_tokens: 160
+      max_new_tokens: 80,
+      do_sample: false,
+      streamer
     });
 
-    const output = result[0].generated_text;
-    const lastMessage = Array.isArray(output)
-      ? output[output.length - 1]
+    const generated = result[0].generated_text;
+    const last = Array.isArray(generated)
+      ? generated[generated.length - 1]
       : null;
 
-    const reply = lastMessage?.content ||
-      (typeof output === "string" ? output : "");
-
-    if (!reply) {
-      throw new Error("Jawaban AI kosong");
+    if (!answer.textContent.trim()) {
+      answer.textContent =
+        last?.content || "Ga mau jawaab.., wle..";
     }
-
-    answer.textContent = reply;
 
     history.push(
       { role: "user", content: text },
-      { role: "assistant", content: reply }
+      { role: "assistant", content: answer.textContent }
     );
 
-    history = history.slice(-16);
+    history = history.slice(-12);
     saveHistory();
 
-    status.textContent = "DEMAX.AI GOD MODE aktif.";
+    status.textContent = "neeh, god modenya elu. wkwk..";
 
   } catch (error) {
-    console.error(error);
+    console.error("error cok..:", error);
 
     answer.textContent =
-      "Maaf, mesin AI mengalami kendala. Coba lagi.";
+      "Mesin AI mengalami kendala. Coba muat ulang halaman.";
 
-    status.textContent = "Terjadi kesalahan.";
+    status.textContent = "bentar, ad yg salah nih..";
     generatorPromise = null;
 
   } finally {
@@ -154,3 +161,4 @@ question.addEventListener("keydown", (event) => {
     sendMessage();
   }
 });
+  
